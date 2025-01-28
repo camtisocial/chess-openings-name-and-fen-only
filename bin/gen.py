@@ -3,7 +3,6 @@
 import io
 import re
 import sys
-
 from typing import Dict, List, TextIO
 
 try:
@@ -20,13 +19,11 @@ ECO_REGEX = re.compile(r"^[A-E]\d\d\Z")
 
 INVALID_SPACE = re.compile(r"\s{2,}|^\s|\s\Z|\s,")
 
-INVALID_WITH = re.compile(r"[^,:]\swith\b")
-
-
 class Stats:
     def __init__(self) -> None:
         self.errors = 0
         self.warnings = 0
+
 
 class Reporter:
     def __init__(self, stats: Stats, file_name: str) -> None:
@@ -42,10 +39,13 @@ class Reporter:
         self.stats.warnings += 1
 
 
-def main(f: TextIO, reporter: Reporter, by_epd: Dict[str, List[str]], shortest_by_name: Dict[str, int]) -> None:
-    prev_eco = ""
-    prev_name = ""
-
+def main(
+    f: TextIO,
+    reporter: Reporter,
+    by_epd: Dict[str, List[str]],
+    shortest_by_name: Dict[str, int],
+    output_file: TextIO,
+) -> None:
     for lno, line in enumerate(f, 1):
         cols = line.rstrip("\n").split("\t")
 
@@ -78,46 +78,14 @@ def main(f: TextIO, reporter: Reporter, by_epd: Dict[str, List[str]], shortest_b
             reporter.error(lno, f"Empty pgn")
             continue
 
-        allowed_lowers = ["with", "de", "der", "del", "von", "and"]
-        if not all([word[0].isupper() for word in re.split(r"\s|-", name) if word not in allowed_lowers and word.isalpha()]):
-            reporter.warning(lno, f"{name!r} word(s) beginning with lowercase letters")
-
-        if INVALID_WITH.search(name):
-            reporter.warning(lno, f"'with' not separated with ',' or ':'")
-
-        for blacklisted in ["refused"]:
-            if blacklisted in name.lower():
-                reporter.warning(lno, f"blacklisted word ({blacklisted!r} in {name!r})")
-
-
-        if shortest_by_name.get(name, -1) == len(board.move_stack):
-            reporter.warning(lno, f"{name!r} does not have a unique shortest line")
-        try:
-            shortest_by_name[name] = min(shortest_by_name[name], len(board.move_stack))
-        except KeyError:
-            shortest_by_name[name] = len(board.move_stack)
-
-        clean_pgn = chess.Board().variation_san(board.move_stack)
-        if clean_pgn != pgn:
-            reporter.error(lno, f"unclean pgn: expected {clean_pgn!r}, got {pgn!r}")
-
-        if name.count(":") > 1:
-            reporter.error(lno, f"multiple ':' in name: {name}")
-
         epd = board.epd()
         if epd in by_epd:
             reporter.error(lno, f"duplicate epd: {by_epd[epd]}")
         else:
             by_epd[epd] = cols
 
-        if eco < prev_eco:
-            reporter.error(lno, f"not ordered by eco ({eco} after {prev_eco})")
-        elif (eco, name) < (prev_eco, prev_name):
-            reporter.error(lno, f"not ordered by name ({name!r} after {prev_name!r})")
-        prev_eco = eco
-        prev_name = name
-
-        print(eco, name, clean_pgn, " ".join(m.uci() for m in board.move_stack), epd, sep="\t")
+        # Write name and epd to the output file
+        output_file.write(f"{name}\t{epd}\n")
 
 
 if __name__ == "__main__":
@@ -125,13 +93,17 @@ if __name__ == "__main__":
         print(f"Usage: {sys.argv[0]} *.tsv", file=sys.stderr)
         sys.exit(2)
 
-    print("eco", "name", "pgn", "uci", "epd", sep="\t")
-
     stats = Stats()
     by_epd: Dict[str, List[str]] = {}
     shortest_by_name: Dict[str, int] = {}
-    for file_name in sys.argv[1:]:
-        with open(file_name) as f:
-            main(f, Reporter(stats, file_name), by_epd, shortest_by_name)
+
+    # Open the output file for writing
+    with open("openings_1.tsv", "w") as output_file:
+
+        for file_name in sys.argv[1:]:
+            with open(file_name) as f:
+                main(f, Reporter(stats, file_name), by_epd, shortest_by_name, output_file)
+
     if stats.errors:
         sys.exit(1)
+
